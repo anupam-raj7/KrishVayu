@@ -1,171 +1,112 @@
+// server/services/weatherService.js  (full file)
+// Gives the app one list of daily weather (30 past days + today + 6 forecast days) per location.
+// Protection against rate limits / outages:
+//   1. in-memory cache per location (WEATHER_CACHE_MINUTES, default 180)
+//   2. one shared request when many users ask for the same block at once
+//   3. retry, then a backup provider (Visual Crossing, if VISUAL_CROSSING_KEY is set)
+//   4. if everything fails, serve the last cached data (up to 48 h old)
+
+const TTL_MS = (Number(process.env.WEATHER_CACHE_MINUTES) || 180) * 60 * 1000;
+const STALE_MAX_MS = 48 * 60 * 60 * 1000;
+const cache = new Map();    // "lat,lon" -> { days, at }
+const inFlight = new Map(); // "lat,lon" -> Promise
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const istDate = offset => new Date(Date.now() + offset * 864e5).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+exports.todayIST = () => istDate(0);
+
+// ---- provider 1: Open-Meteo ----
 const DAILY = [
-  'precipitation_sum',
-  'precipitation_probability_max',
-  'temperature_2m_mean',
-  'temperature_2m_max',
-  'relative_humidity_2m_mean',
-  'dew_point_2m_mean',
-  'weather_code'
+  'precipitation_sum', 'precipitation_probability_max', 'temperature_2m_mean', 'temperature_2m_max',
+  'relative_humidity_2m_mean', 'dew_point_2m_mean', 'weather_code'
 ].join(',');
+const wmoCondition = c => (c == null ? 'cloudy' : c >= 95 ? 'storm' : c >= 51 && c <= 82 ? 'rain' : c <= 1 ? 'clear' : 'cloudy');
 
-const WEATHER_API_URL = process.env.WEATHER_API_URL || 'https://api.open-meteo.com/v1/forecast';
-const REQUEST_TIMEOUT_MS = 10000;
+async function fromOpenMeteo(lat, lon) {
+  const base = process.env.WEATHER_API_URL || 'https://api.open-meteo.com/v1/forecast';
+  const q = new URLSearchParams({ latitude: lat, longitude: lon, daily: DAILY, past_days: 30, forecast_days: 7, timezone: 'Asia/Kolkata' });
+  if (process.env.OPEN_METEO_API_KEY) q.set('apikey', process.env.OPEN_METEO_API_KEY); // only for a paid plan
+  const res = await fetch(`${base}?${q}`, { signal: AbortSignal.timeout(8000) });
+  if (!res.ok) throw new Error('status ' + res.status);
+  const d = (await res.json()).daily;
+  return d.time.map((date, i) => ({
+    date,
+    rain: d.precipitation_sum[i],
+    rainProb: d.precipitation_probability_max[i],
+    temp: d.temperature_2m_mean[i],
+    tmax: d.temperature_2m_max[i],
+    humidity: d.relative_humidity_2m_mean[i],
+    dewPoint: d.dew_point_2m_mean[i],
+    condition: wmoCondition(d.weather_code[i])
+  }));
+}
 
-// Cache weather data for 30 minutes
-const CACHE_TTL_MS = 30 * 60 * 1000;
-const cache = new Map();
-const pendingRequests = new Map();
+// ---- provider 2 (backup): Visual Crossing, needs a free key ----
+const vcCondition = icon => (/thunder/.test(icon || '') ? 'storm' : /rain|showers/.test(icon || '') ? 'rain' : /^clear/.test(icon || '') ? 'clear' : 'cloudy');
 
-const condition = (code) => {
-  if (code == null) return 'cloudy';
-  if (code >= 95) return 'storm';
-  if (code >= 51 && code <= 82) return 'rain';
-  if (code <= 1) return 'clear';
-  return 'cloudy';
-};
-
-exports.todayIST = () => {
-  return new Date().toLocaleDateString('en-CA', {
-    timeZone: 'Asia/Kolkata'
+async function fromVisualCrossing(lat, lon) {
+  const key = process.env.VISUAL_CROSSING_KEY;
+  if (!key) throw new Error('VISUAL_CROSSING_KEY not set');
+  const q = new URLSearchParams({
+    unitGroup: 'metric', include: 'days', contentType: 'json', key,
+    elements: 'datetime,temp,tempmax,humidity,dew,precip,precipprob,icon'
   });
-};
-
-function cacheKey(lat, lon) {
-  return `\({Number(lat).toFixed(4)},\){Number(lon).toFixed(4)}`;
+  const url = `https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/${lat},${lon}/${istDate(-30)}/${istDate(6)}?${q}`;
+  const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
+  if (!res.ok) throw new Error('status ' + res.status);
+  return (await res.json()).days.map(d => ({
+    date: d.datetime,
+    rain: d.precip ?? 0,
+    rainProb: d.precipprob ?? null,
+    temp: d.temp,
+    tmax: d.tempmax,
+    humidity: d.humidity,
+    dewPoint: d.dew,
+    condition: vcCondition(d.icon)
+  }));
 }
 
-// 🔥 NAYA FUNCTION: Agar API fail ho jaye (429), toh website crash hone ke bajaye ye fake data bhej dega
-function getFallbackData() {
-  const fallback = [];
-  const today = new Date();
-  
-  // 30 din purana + aaj + 6 din future = 37 days ka data (jaisa frontend expect karta hai)
-  for (let i = -30; i <= 6; i++) {
-    const d = new Date(today);
-    d.setDate(d.getDate() + i);
-    fallback.push({
-      date: d.toLocaleDateString('en-CA'),
-      rain: 0,
-      rainProb: 15,
-      temp: 26,
-      tmax: 30,
-      humidity: 65,
-      dewPoint: 18,
-      condition: 'cloudy'
-    });
-  }
-  return fallback;
-}
-
-exports.getDays = async (lat, lon) => {
-  const latitude = Number(lat);
-  const longitude = Number(lon);
-
-  // Validate coordinates
-  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
-    throw new Error(`Invalid coordinates: lat=\({lat}, lon=\){lon}`);
-  }
-  if (latitude < -90 || latitude > 90) throw new Error(`Invalid latitude: ${latitude}`);
-  if (longitude < -180 || longitude > 180) throw new Error(`Invalid longitude: ${longitude}`);
-
-  const key = cacheKey(latitude, longitude);
-
-  // 1. Check cache
-  const cached = cache.get(key);
-  if (cached) {
-    const age = Date.now() - cached.timestamp;
-    if (age < CACHE_TTL_MS) {
-      console.log(`Weather cache HIT: ${key}`);
-      return cached.data;
+// ---- fetch with retry + provider fallback ----
+async function withRetry(fn, tries = 2) {
+  let lastError;
+  for (let i = 0; i < tries; i++) {
+    try { return await fn(); } catch (err) {
+      lastError = err;
+      if (i < tries - 1) await sleep(700 * (i + 1));
     }
-    cache.delete(key);
   }
+  throw lastError;
+}
 
-  // 2. Check pending request
-  if (pendingRequests.has(key)) {
-    console.log(`Weather request already running: ${key}`);
-    return pendingRequests.get(key);
-  }
-
-  // 3. Create request
-  const requestPromise = (async () => {
+async function fetchFresh(lat, lon) {
+  for (const [name, provider] of [['Open-Meteo', fromOpenMeteo], ['Visual Crossing', fromVisualCrossing]]) {
     try {
-      const q = new URLSearchParams({
-        latitude: latitude.toString(),
-        longitude: longitude.toString(),
-        daily: DAILY,
-        past_days: '30',
-        forecast_days: '7',
-        timezone: 'Asia/Kolkata'
-      });
-
-      const fullUrl = `\({WEATHER_API_URL}?\){q.toString()}`;
-      
-      // 🔥 FIX 1: Proxy Server Add Kiya (Server ka IP chupane ke liye)
-      const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(fullUrl)}`;
-
-      console.log(`Fetching weather via Proxy for ${key}`);
-
-      const res = await fetch(proxyUrl, {
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-        headers: {
-          'Accept': 'application/json',
-          'User-Agent': 'KrishVayu/1.0'
-        }
-      });
-
-      // 🔥 FIX 2: 429 Rate Limit aane par App Crash NAHI hogi, Fallback data bhejegi
-      if (res.status === 429) {
-        console.error('Open-Meteo returned 429 Too Many Requests! Using Backup Data.');
-        return getFallbackData();
-      }
-
-      if (!res.ok) {
-        console.error(`Weather API status ${res.status}. Using Backup Data.`);
-        return getFallbackData();
-      }
-
-      const body = await res.json();
-
-      // Validate response
-      if (!body.daily || !Array.isArray(body.daily.time)) {
-        console.error('Weather API returned invalid daily response. Using Backup Data.');
-        return getFallbackData();
-      }
-
-      const d = body.daily;
-
-      // Convert response
-      const result = d.time.map((date, i) => ({
-        date,
-        rain: d.precipitation_sum?.[i] ?? 0,
-        rainProb: d.precipitation_probability_max?.[i] ?? null,
-        temp: d.temperature_2m_mean?.[i] ?? null,
-        tmax: d.temperature_2m_max?.[i] ?? null,
-        humidity: d.relative_humidity_2m_mean?.[i] ?? null,
-        dewPoint: d.dew_point_2m_mean?.[i] ?? null,
-        condition: condition(d.weather_code?.[i])
-      }));
-
-      // Save cache
-      cache.set(key, {
-        timestamp: Date.now(),
-        data: result
-      });
-
-      console.log(`Weather cache UPDATED: ${key}`);
-      return result;
-
-    } catch (error) {
-      // 🔥 Agar Network Error ya Timeout aata hai, toh bhi Fallback bhejega
-      console.error(`Fetch failed completely: ${error.message}. Using Backup Data.`);
-      return getFallbackData();
-    } finally {
-      // Always remove pending request
-      pendingRequests.delete(key);
+      return await withRetry(() => provider(lat, lon));
+    } catch (err) {
+      console.warn(`${name} failed: ${err.message}`);
     }
-  })();
+  }
+  throw new Error('All weather providers failed');
+}
 
-  pendingRequests.set(key, requestPromise);
-  return requestPromise;
+// ---- public function used by server/index.js ----
+exports.getDays = async (lat, lon) => {
+  const key = `${lat},${lon}`;
+  const hit = cache.get(key);
+  if (hit && Date.now() - hit.at < TTL_MS) return hit.days;
+
+  if (!inFlight.has(key)) {
+    inFlight.set(key, fetchFresh(lat, lon)
+      .then(days => { cache.set(key, { days, at: Date.now() }); return days; })
+      .finally(() => inFlight.delete(key)));
+  }
+  try {
+    return await inFlight.get(key);
+  } catch (err) {
+    if (hit && Date.now() - hit.at < STALE_MAX_MS) {
+      console.warn('Serving cached (old) weather for', key);
+      return hit.days;
+    }
+    throw err;
+  }
 };
