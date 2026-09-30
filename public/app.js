@@ -1,4 +1,5 @@
 // public/app.js  (full file)
+import { renderChat } from './chat.js';
 import { t, setLang, getLang } from './i18n.js';
 
 const $ = s => document.querySelector(s);
@@ -156,7 +157,8 @@ function setupTabButtons() {
   const btns = [
     { el: $('#btnTab1'), tab: 1 },
     { el: $('#btnTab2'), tab: 2 },
-    { el: $('#btnTab3'), tab: 3 }
+    { el: $('#btnTab3'), tab: 3 },
+    { el: $('#btnTab4'), tab: 4 }
   ];
   btns.forEach(({ el, tab }) => {
     el.onclick = () => {
@@ -179,8 +181,12 @@ async function load() {
 }
 
 function render() {
+if (currentTab === 4) return renderChat($('#result'), () => last);
+  
   if (!last) return;
   const { place, date, day, prediction: p, chart, crops, advice } = last;
+
+  
 
   // TAB 1: PREDICTED RAINFALL
   if (currentTab === 1) {
