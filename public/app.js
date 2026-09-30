@@ -181,7 +181,12 @@ async function load() {
 }
 
 function render() {
-if (currentTab === 4) return renderChat($('#result'), () => last);
+  if (currentTab === 4) {
+    import('./chat.js')
+      .then(m => m.renderChat($('#result'), () => last))
+      .catch(() => { $('#result').innerHTML = `<p class="error">${t('e_generic')}</p>`; });
+    return;
+  }
   
   if (!last) return;
   const { place, date, day, prediction: p, chart, crops, advice } = last;

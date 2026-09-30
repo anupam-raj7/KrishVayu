@@ -2,7 +2,10 @@
 // Talks to Groq (OpenAI-compatible API). The key stays on the server only.
 const URL = 'https://api.groq.com/openai/v1/chat/completions';
 // Main model first; if it errors or hits its limit, the small fast model is tried.
-const MODELS = [...new Set([process.env.GROQ_MODEL || 'llama-3.3-70b-versatile', 'llama-3.1-8b-instant'])];
+const MODELS = [
+  process.env.CAPABLE_MODEL || 'openai/gpt-oss-120b',
+  process.env.CHEAP_MODEL || 'openai/gpt-oss-20b'
+];
 const LANGUAGES = { en: 'English', hi: 'Hindi', or: 'Odia' };
 const r1 = v => (v == null ? 'unknown' : Math.round(v * 10) / 10);
 
