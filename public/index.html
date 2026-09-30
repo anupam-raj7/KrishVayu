@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Koraput Rain Advisor</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;600;700&family=Noto+Sans+Devanagari:wght@400;600;700&family=Noto+Sans+Oriya:wght@400;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css?v=4.0">
+</head>
+<body>
+
+<div class="gov-strip">
+  <span class="saffron"></span>
+  <span class="white"></span>
+  <span class="green"></span>
+</div>
+
+<header>
+  <div class="header-brand">
+    <div class="gov-logos">
+      <!-- 1. Government of India Emblem (Ashoka Lion Capital) -->
+      <img class="gov-logo-img" 
+           src="https://upload.wikimedia.org/wikipedia/commons/thumb/5/55/Emblem_of_India.svg/120px-Emblem_of_India.svg.png" 
+           alt="Government of India Emblem" width="42" height="42"
+           referrerpolicy="no-referrer">
+
+      <!-- 2. Government of Odisha Official Seal (Clean vector, 100% immune to broken links/403) -->
+      <svg class="gov-logo-img" viewBox="0 0 100 100" width="42" height="42" fill="none" xmlns="http://www.w3.org/2000/svg" title="Government of Odisha Seal">
+        <circle cx="50" cy="50" r="46" fill="#ffffff" stroke="#991b1b" stroke-width="5"/>
+        <circle cx="50" cy="50" r="40" stroke="#b91c1c" stroke-width="1.5" stroke-dasharray="3 3"/>
+        <path d="M30 66 C32 58 36 53 42 50 C38 46 37 40 40 35 C42 32 47 30 52 30 C56 30 58 33 60 36 C63 34 67 34 70 36 C72 38 73 42 71 45 C74 47 76 51 74 55 C72 59 68 61 65 62 C64 66 62 70 58 72 C50 76 38 74 30 66 Z" fill="#991b1b"/>
+        <circle cx="50" cy="50" r="9" stroke="#d97706" stroke-width="2.5" fill="#fef3c7"/>
+        <circle cx="50" cy="50" r="3" fill="#991b1b"/>
+        <path d="M50 41 V59 M41 50 H59 M44 44 L56 56 M44 56 L56 44" stroke="#d97706" stroke-width="1.5"/>
+        <text x="50" y="88" text-anchor="middle" font-size="8" font-family="'Noto Sans Oriya', sans-serif" font-weight="700" fill="#991b1b">ଓଡ଼ିଶା ଶାସନ</text>
+      </svg>
+    </div>
+    <div class="brand-text">
+      <h1 data-i18n="appName">Koraput Rain Advisor</h1>
+      <span class="sub" data-i18n="govHeaderSub">Government of Odisha & Government of India</span>
+    </div>
+  </div>
+
+  <div class="tools">
+    <select id="lang" aria-label="Language">
+      <option value="en">English</option>
+      <option value="hi">हिन्दी</option>
+      <option value="or">ଓଡ଼ିଆ</option>
+    </select>
+    <button id="logout" hidden data-i18n="logout">Logout</button>
+  </div>
+</header>
+
+<main>
+  <!-- Authentication Screen -->
+  <div id="auth">
+    <div class="auth-hero-banner">
+      <div class="auth-hero-img-wrap">
+        <!-- REAL HAPPY INDIAN FARMER (NO MORE PLASTIC BOTTLES!) -->
+        <img src="https://images.unsplash.com/photo-1523741543316-beb7fc7023d8?auto=format&fit=crop&w=700&q=80" 
+             alt="Happy Indian Farmer"
+             onerror="this.src='https://images.unsplash.com/photo-1500937386664-56d1dfef3854?auto=format&fit=crop&w=700&q=80'">
+        <span class="caption">🌾 Empowering Farmers</span>
+      </div>
+      <div class="auth-hero-img-wrap">
+        <img src="https://images.unsplash.com/photo-1534274988757-a28bf1a57c17?auto=format&fit=crop&w=700&q=80" 
+             alt="Monsoon Rain">
+        <span class="caption">🌧️ Live Monsoon Radar</span>
+      </div>
+    </div>
+
+    <div class="auth-body">
+      <div class="tabs">
+        <button id="tab-login" class="active" data-i18n="login">Login</button>
+        <button id="tab-register" data-i18n="register">Register</button>
+      </div>
+
+      <p id="authMsg" class="error"></p>
+
+      <form id="loginForm">
+        <label>
+          <span data-i18n="farmerId">Farmer ID</span>
+          <input name="farmerId" placeholder="e.g. 0002" required autocomplete="username">
+        </label>
+        <label>
+          <span data-i18n="password">Password</span>
+          <input name="password" type="password" required autocomplete="current-password">
+        </label>
+        <button type="submit" data-i18n="login">Login</button>
+      </form>
+
+      <form id="registerForm" hidden>
+        <label><span data-i18n="farmerId">Farmer ID</span><input name="farmerId" placeholder="e.g. 0003" required></label>
+        <label><span data-i18n="name">Name</span><input name="name" required></label>
+        <label><span data-i18n="mobile">Mobile number</span><input name="mobile" inputmode="numeric" pattern="[6-9][0-9]{9}" maxlength="10" required></label>
+        <label><span data-i18n="block">Block</span><select id="rBlock" class="loc" name="block" required></select></label>
+        <label><span data-i18n="village">Village (Gram Panchayat)</span><select id="rVillage" class="loc" name="village" required></select></label>
+        <label><span data-i18n="password">Password</span><input name="password" type="password" minlength="6" required></label>
+        <button type="submit" data-i18n="register">Register</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Dashboard Screen -->
+  <div id="dash" hidden>
+    <form id="dForm" class="picker">
+      <label><span data-i18n="block">Block</span><select id="dBlock" class="loc" required></select></label>
+      <label><span data-i18n="village">Village (Gram Panchayat)</span><select id="dVillage" class="loc" required></select></label>
+      <label><span data-i18n="date">Date</span><input id="dDate" type="date" required></label>
+      <button type="submit" data-i18n="show">Show rainfall</button>
+    </form>
+
+    <!-- 3 Buttons -->
+    <div class="dash-buttons">
+      <button id="btnTab1" class="dash-btn active"><span>🌧️</span> <span data-i18n="tab1">1. Predicted Rainfall</span></button>
+      <button id="btnTab2" class="dash-btn"><span>📊</span> <span data-i18n="tab2">2. Weather & Rainfall Bar</span></button>
+      <button id="btnTab3" class="dash-btn"><span>🌾</span> <span data-i18n="tab3">3. Best Crops to Grow</span></button>
+    </div>
+
+    <div id="result"></div>
+  </div>
+</main>
+
+<script type="module" src="app.js?v=4.0"></script>
+</body>
+</html>
